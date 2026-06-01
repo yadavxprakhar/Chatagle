@@ -1,4 +1,7 @@
 import React, { useState } from 'react'
+import { auth, db } from '../firebase.js'
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth'
+import { doc, setDoc } from 'firebase/firestore'
 
 export default function AuthPage({ setCurrentPage, setUser }) {
   const [isRegister, setIsRegister] = useState(false)
@@ -7,36 +10,97 @@ export default function AuthPage({ setCurrentPage, setUser }) {
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
 
-  const handleOAuthLogin = () => {
-    // Simulated Facebook Auth
-    const randomSeed = Math.random().toString(36).substring(7)
-    const facebookUser = {
-      name: 'John Doe',
-      email: 'john.doe@facebook.com',
-      avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=${randomSeed}`
+  const handleOAuthLogin = async () => {
+    try {
+      setError('')
+      setAuthLoading(true)
+      
+      // Dynamic simulated OAuth credential pairing
+      const randomSeed = Math.random().toString(36).substring(7)
+      const mockUid = `oauth_fb_${randomSeed}`
+      const profileData = {
+        name: 'John Doe',
+        email: `john.doe_${randomSeed}@facebook.com`,
+        avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=${randomSeed}`,
+        onlineStatus: 'online',
+        createdAt: new Date().toISOString()
+      }
+      
+      // Persist in Firestore to behave like a production account
+      await setDoc(doc(db, 'users', mockUid), profileData)
+      
+      setUser({
+        uid: mockUid,
+        ...profileData
+      })
+      setCurrentPage('matching')
+    } catch (err) {
+      console.error('OAuth Simulation Error:', err)
+      setError(err.message || 'Simulated OAuth registration failed.')
+    } finally {
+      setAuthLoading(false)
     }
-    setUser(facebookUser)
-    setCurrentPage('matching')
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     if (!email || !password || (isRegister && !fullName)) {
       setError('Please fill in all fields.')
       return
     }
     setError('')
-    
-    const seed = fullName ? encodeURIComponent(fullName) : encodeURIComponent(email)
-    const activeUser = {
-      name: isRegister ? fullName : email.split('@')[0],
-      email: email,
-      avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}`
+    setAuthLoading(true)
+
+    try {
+      if (isRegister) {
+        // 1. Create authenticated account in Firebase Auth
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password)
+        const firebaseUser = userCredential.user
+
+        // 2. Generate and store user details inside Cloud Firestore
+        const seed = encodeURIComponent(fullName)
+        const profileData = {
+          name: fullName,
+          email: email,
+          avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=${seed}`,
+          onlineStatus: 'online',
+          createdAt: new Date().toISOString()
+        }
+
+        await setDoc(doc(db, 'users', firebaseUser.uid), profileData)
+        
+        setUser({
+          uid: firebaseUser.uid,
+          ...profileData
+        })
+      } else {
+        // 1. Sign in via Firebase Auth
+        const userCredential = await signInWithEmailAndPassword(auth, email, password)
+        // User session observer in App.jsx handles state retrieval and navigation triggers!
+      }
+      
+      setCurrentPage('matching')
+    } catch (err) {
+      console.error('Authentication error:', err)
+      
+      // User-friendly error messaging formatting
+      let userMsg = err.message
+      if (err.code === 'auth/email-already-in-use') {
+        userMsg = 'This email address is already registered.'
+      } else if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        userMsg = 'Incorrect email or password combination.'
+      } else if (err.code === 'auth/weak-password') {
+        userMsg = 'Password should be at least 6 characters.'
+      } else if (err.code === 'auth/invalid-email') {
+        userMsg = 'Please enter a valid email address.'
+      }
+      
+      setError(userMsg)
+    } finally {
+      setAuthLoading(false)
     }
-    
-    setUser(activeUser)
-    setCurrentPage('matching')
   }
 
   return (
@@ -86,13 +150,17 @@ export default function AuthPage({ setCurrentPage, setUser }) {
           <button 
             type="button"
             onClick={handleOAuthLogin}
-            className="w-full py-3 px-6 rounded-full bg-[#1877F2] hover:bg-[#166FE5] text-white text-sm font-semibold flex items-center justify-center gap-3 transition-colors duration-200 active:scale-95 shadow-md mb-6"
+            disabled={authLoading}
+            className="w-full py-3 px-6 rounded-full bg-[#1877F2] hover:bg-[#166FE5] text-white text-sm font-semibold flex items-center justify-center gap-3 transition-colors duration-200 active:scale-95 shadow-md mb-6 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {/* Facebook Icon SVG */}
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-            </svg>
-            Continue with Facebook
+            {authLoading ? (
+              <div className="w-4 h-4 rounded-full border-2 border-white/20 border-t-white animate-spin"></div>
+            ) : (
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+              </svg>
+            )}
+            {authLoading ? 'Verifying...' : 'Continue with Facebook'}
           </button>
 
           {/* Divider */}
@@ -111,8 +179,9 @@ export default function AuthPage({ setCurrentPage, setUser }) {
                   type="text" 
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
+                  disabled={authLoading}
                   placeholder="Alex Mercer"
-                  className="w-full bg-[#1A1A2E] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-textMuted/40 focus:outline-none focus:border-accentPrimary focus:ring-4 focus:ring-accentPrimary/15 transition-all duration-200"
+                  className="w-full bg-[#1A1A2E] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-textMuted/40 focus:outline-none focus:border-accentPrimary focus:ring-4 focus:ring-accentPrimary/15 transition-all duration-200 disabled:opacity-50"
                 />
               </div>
             )}
@@ -123,8 +192,9 @@ export default function AuthPage({ setCurrentPage, setUser }) {
                 type="email" 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={authLoading}
                 placeholder="your@email.com"
-                className="w-full bg-[#1A1A2E] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-textMuted/40 focus:outline-none focus:border-accentPrimary focus:ring-4 focus:ring-accentPrimary/15 transition-all duration-200"
+                className="w-full bg-[#1A1A2E] border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-textMuted/40 focus:outline-none focus:border-accentPrimary focus:ring-4 focus:ring-accentPrimary/15 transition-all duration-200 disabled:opacity-50"
               />
             </div>
 
@@ -142,13 +212,15 @@ export default function AuthPage({ setCurrentPage, setUser }) {
                   type={showPassword ? 'text' : 'password'} 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={authLoading}
                   placeholder="••••••••"
-                  className="w-full bg-[#1A1A2E] border border-white/10 rounded-xl pl-4 pr-12 py-3 text-sm text-white placeholder-textMuted/40 focus:outline-none focus:border-accentPrimary focus:ring-4 focus:ring-accentPrimary/15 transition-all duration-200"
+                  className="w-full bg-[#1A1A2E] border border-white/10 rounded-xl pl-4 pr-12 py-3 text-sm text-white placeholder-textMuted/40 focus:outline-none focus:border-accentPrimary focus:ring-4 focus:ring-accentPrimary/15 transition-all duration-200 disabled:opacity-50"
                 />
                 <button 
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"
+                  disabled={authLoading}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors disabled:opacity-30"
                 >
                   {showPassword ? (
                     // Eye off SVG
@@ -169,9 +241,13 @@ export default function AuthPage({ setCurrentPage, setUser }) {
             {/* Login / Create Account Button */}
             <button 
               type="submit"
-              className="w-full btn-gradient py-3.5 px-6 rounded-full text-white text-sm font-semibold tracking-wide uppercase mt-2 shadow-lg active:scale-95 duration-200"
+              disabled={authLoading}
+              className="w-full btn-gradient py-3.5 px-6 rounded-full text-white text-sm font-semibold tracking-wide uppercase mt-2 shadow-lg active:scale-95 duration-200 flex items-center justify-center gap-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isRegister ? 'Create Account' : 'Login'}
+              {authLoading && (
+                <div className="w-4 h-4 rounded-full border-2 border-white/20 border-t-white animate-spin"></div>
+              )}
+              {authLoading ? 'Processing...' : (isRegister ? 'Create Account' : 'Login')}
             </button>
           </form>
 
@@ -185,7 +261,8 @@ export default function AuthPage({ setCurrentPage, setUser }) {
                 setIsRegister(!isRegister)
                 setError('')
               }}
-              className="font-semibold text-accentSecondary hover:underline"
+              disabled={authLoading}
+              className="font-semibold text-accentSecondary hover:underline disabled:opacity-50"
             >
               {isRegister ? 'Login' : 'Sign Up'}
             </button>

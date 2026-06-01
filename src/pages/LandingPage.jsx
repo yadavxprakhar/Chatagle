@@ -196,9 +196,9 @@ export default function LandingPage({ setCurrentPage, user }) {
 
           {/* Links */}
           <div className="flex items-center gap-8 text-sm font-medium text-textMuted">
-            <a href="#privacy" className="hover:text-white transition-colors duration-200">Privacy Policy</a>
-            <a href="#terms" className="hover:text-white transition-colors duration-200">Terms of Service</a>
-            <a href="#safety" className="hover:text-white transition-colors duration-200">Safety Center</a>
+            <button onClick={() => setCurrentPage('privacy')} className="hover:text-white transition-colors duration-200">Privacy Policy</button>
+            <button onClick={() => setCurrentPage('terms')} className="hover:text-white transition-colors duration-200">Terms of Service</button>
+            <button onClick={() => setCurrentPage('safety')} className="hover:text-white transition-colors duration-200">Safety Center</button>
           </div>
 
           {/* Copyright */}
