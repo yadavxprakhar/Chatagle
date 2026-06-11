@@ -15,6 +15,8 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState('landing')
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [matchRoomId, setMatchRoomId] = useState(null)
+  const [matchRole, setMatchRole] = useState(null)
   
   // High-fidelity online user count that fluctuates organically
   const [onlineCount, setOnlineCount] = useState(23104)
@@ -75,9 +77,27 @@ export default function App() {
       case 'login':
         return <AuthPage setCurrentPage={setCurrentPage} setUser={setUser} />
       case 'matching':
-        return <MatchingPage setCurrentPage={setCurrentPage} user={user} onlineCount={onlineCount} />
+        return (
+          <MatchingPage 
+            setCurrentPage={setCurrentPage} 
+            user={user} 
+            onlineCount={onlineCount} 
+            setMatchRoomId={setMatchRoomId}
+            setMatchRole={setMatchRole}
+          />
+        )
       case 'chat':
-        return <ChatPage setCurrentPage={setCurrentPage} user={user} onlineCount={onlineCount} />
+        return (
+          <ChatPage 
+            setCurrentPage={setCurrentPage} 
+            user={user} 
+            onlineCount={onlineCount} 
+            matchRoomId={matchRoomId}
+            matchRole={matchRole}
+            setMatchRoomId={setMatchRoomId}
+            setMatchRole={setMatchRole}
+          />
+        )
       case 'privacy':
         return <PrivacyPage setCurrentPage={setCurrentPage} />
       case 'terms':

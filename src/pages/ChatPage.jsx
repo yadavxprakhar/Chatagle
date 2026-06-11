@@ -1,76 +1,58 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { db } from '../firebase.js'
+import {
+  doc,
+  collection,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  setDoc,
+  serverTimestamp,
+  query,
+  orderBy
+} from 'firebase/firestore'
 
-const SIMULATED_PARTNERS = [
-  {
-    name: 'Chloe',
-    age: 22,
-    city: 'Paris',
-    country: 'France',
-    flag: '🇫🇷',
-    avatar: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Chloe',
-    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-girl-in-neon-sign-smiling-39889-large.mp4',
-    chatSequence: [
-      { delay: 1000, message: 'Hey there! 👋' },
-      { delay: 3500, message: "I'm Chloe, visiting from Paris! What's your name?" },
-      { delay: 7000, message: "This app is so fast tonight! What time is it over there? 🌌" }
-    ]
-  },
-  {
-    name: 'Carlos',
-    age: 24,
-    city: 'Rio de Janeiro',
-    country: 'Brazil',
-    flag: '🇧🇷',
-    avatar: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Carlos',
-    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-young-man-smiling-in-a-nightclub-40013-large.mp4',
-    chatSequence: [
-      { delay: 1000, message: 'Hey bro! 🤙' },
-      { delay: 3200, message: 'Carlos here from Rio! What are you up to today?' },
-      { delay: 6500, message: 'Awesome, love meeting people from around the world!' }
-    ]
-  },
-  {
-    name: 'Yuki',
-    age: 23,
-    city: 'Kyoto',
-    country: 'Japan',
-    flag: '🇯🇵',
-    avatar: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Yuki',
-    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-young-woman-with-neon-makeup-smiling-39906-large.mp4',
-    chatSequence: [
-      { delay: 1000, message: 'Konnichiwa! 🌸' },
-      { delay: 3000, message: "I'm Yuki. I'm studying design in Kyoto. Where are you?" },
-      { delay: 6000, message: 'I love your vibe! Let’s follow each other!' }
-    ]
-  },
-  {
-    name: 'Sarah',
-    age: 21,
-    city: 'Brooklyn, NY',
-    country: 'United States',
-    flag: '🇺🇸',
-    avatar: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Sarah',
-    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-woman-with-neon-makeup-looking-at-camera-39907-large.mp4',
-    chatSequence: [
-      { delay: 1000, message: 'Hello! 😊' },
-      { delay: 3500, message: "Sarah here from NYC! How are you doing today?" },
-      { delay: 7000, message: 'Such a cool app, matching people instantly.' }
-    ]
-  }
-]
+const configuration = {
+  iceServers: [
+    {
+      urls: [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302'
+      ]
+    }
+  ],
+  iceCandidatePoolSize: 10
+}
 
-export default function ChatPage({ setCurrentPage, user, onlineCount }) {
-  // Cycle through simulated users
-  const [partnerIndex, setPartnerIndex] = useState(0)
-  const partner = SIMULATED_PARTNERS[partnerIndex]
-
-  // Local WebRTC States
+export default function ChatPage({ 
+  setCurrentPage, 
+  user, 
+  onlineCount, 
+  matchRoomId, 
+  matchRole, 
+  setMatchRoomId, 
+  setMatchRole 
+}) {
+  // Local WebRTC & Signaling States
   const [localStream, setLocalStream] = useState(null)
+  const [remoteStream, setRemoteStream] = useState(null)
+  const [connectionState, setConnectionState] = useState('new')
   const [isMicOn, setIsMicOn] = useState(true)
   const [isCameraOn, setIsCameraOn] = useState(true)
   const [cameraError, setCameraError] = useState(false)
 
-  // Remote connection timer
+  // Remote partner details
+  const [partnerUid, setPartnerUid] = useState(null)
+  const [partnerInfo, setPartnerInfo] = useState({
+    name: 'Connecting...',
+    flag: '🌍',
+    city: 'Searching...',
+    country: '',
+    avatar: 'https://api.dicebear.com/7.x/adventurer/svg?seed=Connecting'
+  })
+
+  // Timer
   const [timeConnected, setTimeConnected] = useState(0)
 
   // Chat Panel States
@@ -84,16 +66,24 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
   const [toastMessage, setToastMessage] = useState('')
 
   const localVideoRef = useRef(null)
+  const remoteVideoRef = useRef(null)
+  const peerConnectionRef = useRef(null)
   const chatBottomRef = useRef(null)
+  const isDisconnecting = useRef(false)
 
-  // 1. Initialise Local Camera Stream
+  // 1. Initialize Local Camera Stream
   useEffect(() => {
+    let isMounted = true
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true
         })
+        if (!isMounted) {
+          stream.getTracks().forEach(track => track.stop())
+          return
+        }
         setLocalStream(stream)
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream
@@ -101,7 +91,9 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
         setCameraError(false)
       } catch (err) {
         console.error('Camera access denied or unavailable', err)
-        setCameraError(true)
+        if (isMounted) {
+          setCameraError(true)
+        }
       }
     }
 
@@ -111,7 +103,10 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
       stopCamera()
     }
 
-    return () => stopCamera()
+    return () => {
+      isMounted = false
+      stopCamera()
+    }
   }, [isCameraOn])
 
   const stopCamera = () => {
@@ -130,31 +125,225 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
     }
   }, [isMicOn, localStream])
 
-  // 2. Incremental connection timer & chat sequence simulation
+  // 2. WebRTC PeerConnection & Firestore Signaling Flow
   useEffect(() => {
-    setTimeConnected(0)
-    setMessages([])
-    
-    // Live elapsed timer
+    if (!localStream || !matchRoomId || !matchRole) return
+
+    let isMounted = true
+    let unsubscribeRoom = null
+    let unsubscribeIce = null
+    let unsubscribeRoomOffer = null
+    let unsubscribeAnswer = null
+
+    const roomRef = doc(db, 'rooms', matchRoomId)
+    const callerCandidatesCol = collection(roomRef, 'callerCandidates')
+    const calleeCandidatesCol = collection(roomRef, 'calleeCandidates')
+
+    const pc = new RTCPeerConnection(configuration)
+    peerConnectionRef.current = pc
+
+    // Add local tracks to peer connection
+    localStream.getTracks().forEach(track => {
+      pc.addTrack(track, localStream)
+    })
+
+    // Remote stream setup
+    const rStream = new MediaStream()
+    setRemoteStream(rStream)
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = rStream
+    }
+
+    pc.ontrack = (event) => {
+      event.streams[0].getTracks().forEach(track => {
+        rStream.addTrack(track)
+      })
+    }
+
+    pc.onconnectionstatechange = () => {
+      if (isMounted) {
+        setConnectionState(pc.connectionState)
+      }
+    }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && isMounted) {
+        const candidateData = event.candidate.toJSON()
+        const targetCol = matchRole === 'caller' ? callerCandidatesCol : calleeCandidatesCol
+        addDoc(targetCol, candidateData).catch(err => console.error("Error writing ICE candidate:", err))
+      }
+    }
+
+    // Monitor room for partner metadata and disconnection
+    unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
+      if (!isMounted) return
+      if (!snapshot.exists()) {
+        handlePartnerDisconnected('Partner disconnected.')
+        return
+      }
+      const data = snapshot.data()
+      if (data.status === 'disconnected') {
+        handlePartnerDisconnected('Partner skipped.')
+        return
+      }
+
+      // Update remote partner details
+      const matchedPeerUid = matchRole === 'caller' ? data.peerId : data.creatorId
+      if (matchedPeerUid) {
+        setPartnerUid(matchedPeerUid)
+      }
+
+      if (matchRole === 'caller') {
+        if (data.peerId) {
+          setPartnerInfo({
+            name: data.peerName || 'Partner',
+            avatar: data.peerAvatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Partner',
+            flag: data.peerFlag || '🌍',
+            city: data.peerInfo?.city || 'Unknown City',
+            country: data.peerInfo?.country || ''
+          })
+        }
+      } else {
+        setPartnerInfo({
+          name: data.creatorName || 'Partner',
+          avatar: data.creatorAvatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Partner',
+          flag: data.creatorFlag || '🌍',
+          city: data.creatorInfo?.city || 'Unknown City',
+          country: data.creatorInfo?.country || ''
+        })
+      }
+    })
+
+    // ICE Candidate listener
+    const iceColToListen = matchRole === 'caller' ? calleeCandidatesCol : callerCandidatesCol
+    unsubscribeIce = onSnapshot(iceColToListen, (snapshot) => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === 'added' && isMounted) {
+          const candidateData = change.doc.data()
+          pc.addIceCandidate(new RTCIceCandidate(candidateData)).catch(err => console.warn("Error adding remote ICE candidate:", err))
+        }
+      })
+    })
+
+    // SDP Offer / Answer Exchange
+    async function startSdpExchange() {
+      try {
+        if (matchRole === 'caller') {
+          // Caller creates the offer
+          const offerDescription = await pc.createOffer()
+          await pc.setLocalDescription(offerDescription)
+
+          await updateDoc(roomRef, {
+            offer: {
+              type: offerDescription.type,
+              sdp: offerDescription.sdp
+            }
+          })
+
+          // Listen for answer
+          unsubscribeAnswer = onSnapshot(roomRef, (snapshot) => {
+            if (!isMounted) return
+            const data = snapshot.data()
+            if (data && data.answer && !pc.currentRemoteDescription) {
+              const answerDescription = new RTCSessionDescription(data.answer)
+              pc.setRemoteDescription(answerDescription).catch(err => console.error("Error setting answer description:", err))
+            }
+          })
+        } else {
+          // Callee listens for the offer
+          unsubscribeRoomOffer = onSnapshot(roomRef, async (snapshot) => {
+            if (!isMounted) return
+            const data = snapshot.data()
+            if (data && data.offer && !pc.localDescription) {
+              try {
+                const offerDescription = new RTCSessionDescription(data.offer)
+                await pc.setRemoteDescription(offerDescription)
+
+                const answerDescription = await pc.createAnswer()
+                await pc.setLocalDescription(answerDescription)
+
+                await updateDoc(roomRef, {
+                  answer: {
+                    type: answerDescription.type,
+                    sdp: answerDescription.sdp
+                  }
+                })
+              } catch (sdpErr) {
+                console.error("Error setting remote offer / answer:", sdpErr)
+              }
+            }
+          })
+        }
+      } catch (err) {
+        console.error("SDP exchange failed:", err)
+      }
+    }
+
+    startSdpExchange()
+
+    return () => {
+      isMounted = false
+      if (unsubscribeRoom) unsubscribeRoom()
+      if (unsubscribeIce) unsubscribeIce()
+      if (unsubscribeRoomOffer) unsubscribeRoomOffer()
+      if (unsubscribeAnswer) unsubscribeAnswer()
+      pc.close()
+    }
+  }, [localStream, matchRoomId, matchRole])
+
+  // Partner Disconnect Handler
+  const handlePartnerDisconnected = (message) => {
+    if (isDisconnecting.current) return
+    isDisconnecting.current = true
+
+    cleanupWebRTC()
+    setToastMessage(message || 'Partner skipped.')
+    setTimeout(() => setToastMessage(''), 3000)
+
+    // Reset parameters in App.jsx and redirect to matching
+    setTimeout(() => {
+      setMatchRoomId(null)
+      setMatchRole(null)
+      setCurrentPage('matching')
+    }, 1500)
+  }
+
+  // 3. Incremental Live Connection Timer
+  useEffect(() => {
+    if (connectionState !== 'connected') {
+      setTimeConnected(0)
+      return
+    }
     const interval = setInterval(() => {
       setTimeConnected(prev => prev + 1)
     }, 1000)
+    return () => clearInterval(interval)
+  }, [connectionState])
 
-    // Schedule chatbot responses
-    const chatTimers = partner.chatSequence.map(seq => {
-      return setTimeout(() => {
-        setMessages(prev => [
-          ...prev,
-          { sender: 'partner', name: partner.name, text: seq.message, time: new Date() }
-        ])
-      }, seq.delay)
+  // 4. Real-time Message Collection Listener
+  useEffect(() => {
+    if (!matchRoomId) return
+
+    const messagesCol = collection(db, 'rooms', matchRoomId, 'messages')
+    const q = query(messagesCol, orderBy('createdAt', 'asc'))
+
+    const unsubscribeMessages = onSnapshot(q, (snapshot) => {
+      const msgs = []
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data()
+        msgs.push({
+          id: docSnap.id,
+          sender: data.senderId === user?.uid ? 'user' : 'partner',
+          name: data.senderName,
+          text: data.text,
+          time: data.createdAt ? data.createdAt.toDate() : new Date()
+        })
+      })
+      setMessages(msgs)
     })
 
-    return () => {
-      clearInterval(interval)
-      chatTimers.forEach(clearTimeout)
-    }
-  }, [partnerIndex])
+    return () => unsubscribeMessages()
+  }, [matchRoomId, user])
 
   // Scroll to chat bottom
   useEffect(() => {
@@ -169,67 +358,103 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
   }
 
   // Handle sending a message
-  const handleSendMessage = (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault()
-    if (!typedMessage.trim()) return
+    if (!typedMessage.trim() || !matchRoomId) return
 
-    const newMsg = {
-      sender: 'user',
-      name: user?.name || 'You',
-      text: typedMessage,
-      time: new Date()
+    const messagesCol = collection(db, 'rooms', matchRoomId, 'messages')
+    try {
+      await addDoc(messagesCol, {
+        senderId: user?.uid || 'guest_' + Math.random().toString(36).substring(7),
+        senderName: user?.name || 'You',
+        text: typedMessage,
+        createdAt: serverTimestamp()
+      })
+      setTypedMessage('')
+    } catch (err) {
+      console.error("Error sending message:", err)
     }
-
-    setMessages(prev => [...prev, newMsg])
-    setTypedMessage('')
-
-    // Simple simulated responder
-    setTimeout(() => {
-      const responses = [
-        "That's so cool!",
-        "Awesome! Love it.",
-        "Haha totally!",
-        "Nice, I agree!",
-        "What do you like to do in your free time?",
-        "Really? That's awesome."
-      ]
-      const randomResponse = responses[Math.floor(Math.random() * responses.length)]
-      setMessages(prev => [
-        ...prev,
-        { sender: 'partner', name: partner.name, text: randomResponse, time: new Date() }
-      ])
-    }, 1500)
   }
 
   // Skip / Next Match
-  const handleNextMatch = () => {
-    // Show a quick loader, then cycle index
+  const handleNextMatch = async () => {
+    if (isDisconnecting.current) return
+    isDisconnecting.current = true
+
+    if (matchRoomId) {
+      try {
+        const roomRef = doc(db, 'rooms', matchRoomId)
+        await updateDoc(roomRef, { status: 'disconnected' })
+      } catch (err) {
+        console.error("Error setting disconnected status on next match:", err)
+      }
+    }
+
+    cleanupWebRTC()
+    setMatchRoomId(null)
+    setMatchRole(null)
     setCurrentPage('matching')
-    setTimeout(() => {
-      setPartnerIndex(prev => (prev + 1) % SIMULATED_PARTNERS.length)
-    }, 50)
   }
 
   // End Session
-  const handleEndSession = () => {
-    stopCamera()
+  const handleEndSession = async () => {
+    if (isDisconnecting.current) return
+    isDisconnecting.current = true
+
+    if (matchRoomId) {
+      try {
+        const roomRef = doc(db, 'rooms', matchRoomId)
+        await updateDoc(roomRef, { status: 'disconnected' })
+      } catch (err) {
+        console.error("Error setting disconnected status on end session:", err)
+      }
+    }
+
+    cleanupWebRTC()
+    setMatchRoomId(null)
+    setMatchRole(null)
     setCurrentPage('landing')
   }
 
+  const cleanupWebRTC = () => {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close()
+      peerConnectionRef.current = null
+    }
+    stopCamera()
+    setRemoteStream(null)
+  }
+
   // Submit Report
-  const handleSendReport = (e) => {
+  const handleSendReport = async (e) => {
     e.preventDefault()
     if (!reportReason) return
+
+    // Save block document: users/{myUid}/blocks/{partnerUid}
+    if (user?.uid && partnerUid) {
+      try {
+        const blockRef = doc(db, 'users', user.uid, 'blocks', partnerUid)
+        await setDoc(blockRef, {
+          name: partnerInfo.name,
+          avatar: partnerInfo.avatar,
+          flag: partnerInfo.flag,
+          reason: reportReason,
+          createdAt: serverTimestamp()
+        })
+      } catch (err) {
+        console.error("Error persisting block in Firestore:", err)
+      }
+    }
 
     setIsReportOpen(false)
     setReportReason('')
     
-    // Show premium toast
-    setToastMessage(`Reported & blocked ${partner.name} successfully. Matching next...`)
+    // Show premium block notification
+    setToastMessage(`Reported & blocked ${partnerInfo.name} successfully. Matching next...`)
     setTimeout(() => setToastMessage(''), 4000)
 
-    // Automatically skip to the next person after reporting
-    handleNextMatch()
+    // Mark room as disconnected and find next
+    await handleNextMatch()
   }
 
   return (
@@ -238,17 +463,27 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
       {/* 1. Main Viewport Area (Takes full screen) */}
       <div className="relative flex-1 h-full flex flex-col">
         
-        {/* Remote Video Feed (Full-screen background loop) */}
+        {/* Remote Video Feed */}
         <div className="absolute inset-0 z-0 bg-[#07070B] overflow-hidden">
           <video 
-            key={partner.videoUrl}
-            src={partner.videoUrl} 
+            ref={remoteVideoRef}
             autoPlay 
-            loop 
-            muted 
             playsInline
             className="w-full h-full object-cover scale-105"
           />
+
+          {/* Connection state overlay */}
+          {connectionState !== 'connected' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#07070B]/90 z-10 gap-4">
+              <div className="w-12 h-12 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin"></div>
+              <span className="text-xs font-bold tracking-wider text-textMuted uppercase animate-pulse">
+                {connectionState === 'checking' || connectionState === 'connecting'
+                  ? 'Connecting to peer...'
+                  : 'Establishing media stream...'}
+              </span>
+            </div>
+          )}
+
           {/* Subtle Vignette Overlay */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-black/60 pointer-events-none"></div>
         </div>
@@ -285,13 +520,13 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
         {/* 3. Match Info Chip (Top-left) */}
         <div className="absolute top-20 left-6 z-10 animate-fade-up">
           <div className="glass-panel px-4 py-2.5 flex items-center gap-3 bg-black/45 border-white/5 shadow-lg">
-            <span className="text-lg">{partner.flag}</span>
+            <span className="text-lg">{partnerInfo.flag}</span>
             <div className="flex flex-col text-left">
               <span className="text-xs font-bold text-white leading-tight">
-                {partner.name}, {partner.age}
+                {partnerInfo.name}
               </span>
               <span className="text-[10px] text-textMuted font-medium leading-none mt-0.5">
-                {partner.city}, {partner.country}
+                {partnerInfo.city}{partnerInfo.country ? `, ${partnerInfo.country}` : ''}
               </span>
             </div>
             <div className="h-6 w-[1px] bg-white/10 mx-1"></div>
@@ -395,12 +630,12 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img 
-              src={partner.avatar} 
+              src={partnerInfo.avatar} 
               alt="Avatar" 
               className="w-8 h-8 rounded-full bg-purple-900 border border-white/20" 
             />
             <div className="flex flex-col text-left">
-              <span className="text-sm font-bold text-white leading-tight">{partner.name}</span>
+              <span className="text-sm font-bold text-white leading-tight">{partnerInfo.name}</span>
               <span className="text-[10px] text-onlineGreen flex items-center gap-1 font-semibold">
                 <span className="h-1.5 w-1.5 rounded-full bg-onlineGreen"></span> Active Chat
               </span>
@@ -423,9 +658,9 @@ export default function ChatPage({ setCurrentPage, user, onlineCount }) {
               <p className="text-[11px] mt-1">Start typing below to say hello!</p>
             </div>
           ) : (
-            messages.map((msg, index) => (
+            messages.map((msg) => (
               <div 
-                key={index} 
+                key={msg.id} 
                 className={`flex flex-col max-w-[85%] ${
                   msg.sender === 'user' ? 'self-end items-end' : 'self-start items-start'
                 }`}
