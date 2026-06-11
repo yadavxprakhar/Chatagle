@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Particles } from '../components/magicui/Particles.jsx'
+import { BorderBeam } from '../components/magicui/BorderBeam.jsx'
 import { db } from '../firebase.js'
 import {
   doc,
@@ -475,8 +477,15 @@ export default function ChatPage({
           {/* Connection state overlay */}
           {connectionState !== 'connected' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#07070B]/90 z-10 gap-4">
-              <div className="w-12 h-12 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin"></div>
-              <span className="text-xs font-bold tracking-wider text-textMuted uppercase animate-pulse">
+              <Particles
+                className="absolute inset-0 z-0"
+                quantity={80}
+                ease={60}
+                color="#a855f7"
+                refresh
+              />
+              <div className="w-12 h-12 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin z-10"></div>
+              <span className="text-xs font-bold tracking-wider text-textMuted uppercase animate-pulse z-10">
                 {connectionState === 'checking' || connectionState === 'connecting'
                   ? 'Connecting to peer...'
                   : 'Establishing media stream...'}
@@ -539,6 +548,7 @@ export default function ChatPage({
 
         {/* 4. Local Camera Feed (Floating Bottom-Right Card) */}
         <div className="absolute bottom-28 right-6 md:bottom-32 md:right-8 z-20 w-[140px] h-[105px] md:w-[200px] md:h-[150px] rounded-2xl overflow-hidden glass-panel border-2 border-white/15 shadow-2xl flex items-center justify-center bg-black/60 transition-all hover:scale-105 duration-200">
+          <BorderBeam size={60} duration={4} colorFrom="#A855F7" colorTo="#06B6D4" />
           {isCameraOn && !cameraError ? (
             <video 
               ref={localVideoRef} 
@@ -561,7 +571,8 @@ export default function ChatPage({
 
         {/* 5. Center Bottom Controls Bar */}
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-4">
-          <div className="glass-panel px-5 py-4 flex items-center justify-between gap-4 bg-black/55 border-white/10 shadow-2xl rounded-full">
+          <div className="glass-panel px-5 py-4 flex items-center justify-between gap-4 bg-black/55 border-white/10 shadow-2xl rounded-full overflow-hidden relative">
+            <BorderBeam size={100} duration={8} colorFrom="#A855F7" colorTo="#EC4899" />
             {/* Mic Toggle */}
             <button 
               onClick={() => setIsMicOn(!isMicOn)}

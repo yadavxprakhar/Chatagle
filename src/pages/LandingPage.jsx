@@ -1,4 +1,7 @@
 import React from 'react'
+import { Particles } from '../components/magicui/Particles.jsx'
+import { BorderBeam } from '../components/magicui/BorderBeam.jsx'
+import { AnimatedShinyText } from '../components/magicui/AnimatedShinyText.jsx'
 
 export default function LandingPage({ setCurrentPage, user }) {
   const handleStartChat = () => {
@@ -16,11 +19,25 @@ export default function LandingPage({ setCurrentPage, user }) {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[70vw] h-[70vw] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.15),transparent_70%)]"></div>
       </div>
 
+      <Particles
+        className="absolute inset-0 z-0"
+        quantity={180}
+        ease={80}
+        color="#a855f7"
+        refresh
+      />
+
       {/* Hero Section */}
       <section className="relative z-10 max-w-6xl mx-auto px-6 pt-32 pb-24 md:pt-40 md:pb-32 min-h-screen flex flex-col justify-center">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
           {/* Hero Left Content */}
           <div className="lg:col-span-7 flex flex-col items-start text-left animate-fade-up">
+            {/* Shimmer Badge */}
+            <div className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-purple-500/30 bg-purple-500/5 mb-6">
+              <AnimatedShinyText className="text-xs font-bold uppercase tracking-wider">
+                ⚡️ Live Matchmaking Active
+              </AnimatedShinyText>
+            </div>
             <h1 className="text-4xl md:text-5xl lg:text-[56px] font-bold font-display text-white leading-tight tracking-tight mb-6">
               Meet Someone New.<br />
               <span className="text-gradient">Right Now.</span>
@@ -64,7 +81,8 @@ export default function LandingPage({ setCurrentPage, user }) {
             </div>
 
             {/* Card 2 (Center) */}
-            <div className="absolute z-20 rotate-0 glass-panel p-3.5 w-[180px] md:w-[210px] h-[240px] md:h-[280px] shadow-2xl transition-transform hover:scale-105 duration-300">
+            <div className="absolute z-20 rotate-0 glass-panel p-3.5 w-[180px] md:w-[210px] h-[240px] md:h-[280px] shadow-2xl transition-transform hover:scale-105 duration-300 overflow-hidden">
+              <BorderBeam size={80} duration={8} colorFrom="#A855F7" colorTo="#EC4899" />
               <div className="w-full h-[80%] rounded-xl bg-gradient-to-tr from-rose-950 to-pink-900 overflow-hidden relative border border-white/5">
                 <img 
                   src="https://api.dicebear.com/7.x/adventurer/svg?seed=Alex" 

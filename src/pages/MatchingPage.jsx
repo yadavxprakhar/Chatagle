@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Particles } from '../components/magicui/Particles.jsx'
+import { BorderBeam } from '../components/magicui/BorderBeam.jsx'
 import { db } from '../firebase.js'
 import { 
   collection, 
@@ -264,6 +266,14 @@ export default function MatchingPage({ setCurrentPage, user, onlineCount, setMat
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.08),transparent_70%)]"></div>
         </div>
 
+        <Particles
+          className="absolute inset-0 z-0"
+          quantity={120}
+          ease={70}
+          color="#a855f7"
+          refresh
+        />
+
         <div className="relative z-10 w-full max-w-lg animate-fade-up">
           {/* Header */}
           <div className="text-center mb-8">
@@ -276,7 +286,8 @@ export default function MatchingPage({ setCurrentPage, user, onlineCount, setMat
           </div>
 
           {/* Preferences Card */}
-          <div className="glass-panel p-6 md:p-8 bg-white/[0.03] border-white/10 shadow-2xl flex flex-col gap-6">
+          <div className="glass-panel p-6 md:p-8 bg-white/[0.03] border-white/10 shadow-2xl flex flex-col gap-6 overflow-hidden relative">
+            <BorderBeam size={150} duration={10} colorFrom="#A855F7" colorTo="#EC4899" />
             
             {/* Country/Region Filter */}
             <div className="flex flex-col gap-2.5 text-left">
@@ -395,6 +406,14 @@ export default function MatchingPage({ setCurrentPage, user, onlineCount, setMat
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60vw] h-[60vw] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(236,72,153,0.06),transparent_70%)]"></div>
       </div>
+
+      <Particles
+        className="absolute inset-0 z-0"
+        quantity={150}
+        ease={50}
+        color="#ec4899"
+        refresh
+      />
 
       <div className="relative z-10 flex flex-col items-center max-w-md w-full text-center">
         

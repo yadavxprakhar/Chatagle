@@ -160,3 +160,18 @@
   animation: dotBounce 1.2s infinite ease-in-out;
   animation-delay: 0.4s;
 }
+
+/* Animated Shiny Text keyframes & class */
+@keyframes shiny-text {
+  0%, 90%, 100% {
+    background-position: calc(-100% - var(--shiny-width)) 0;
+  }
+  30%, 60% {
+    background-position: calc(100% + var(--shiny-width)) 0;
+  }
+}
+
+.animate-shiny-text {
+  animation: shiny-text 6s infinite;
+}
+
