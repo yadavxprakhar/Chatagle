@@ -7,6 +7,7 @@ import ChatPage from './pages/ChatPage.jsx'
 import PrivacyPage from './pages/PrivacyPage.jsx'
 import TermsPage from './pages/TermsPage.jsx'
 import SafetyPage from './pages/SafetyPage.jsx'
+import ProfilePage from './pages/ProfilePage.jsx'
 import { auth, db } from './firebase.js'
 import { onAuthStateChanged } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
@@ -104,6 +105,8 @@ export default function App() {
         return <TermsPage setCurrentPage={setCurrentPage} />
       case 'safety':
         return <SafetyPage setCurrentPage={setCurrentPage} />
+      case 'profile':
+        return <ProfilePage setCurrentPage={setCurrentPage} user={user} setUser={setUser} />
       default:
         return <LandingPage setCurrentPage={setCurrentPage} user={user} />
     }
@@ -124,8 +127,8 @@ export default function App() {
   return (
     <div className="relative min-h-screen bg-[#0A0A0F] text-[#F9FAFB] flex flex-col font-body selection:bg-purple-600 selection:text-white">
       
-      {/* Translucent Navbar (Shown on Landing, Login, and Policies pages) */}
-      {(currentPage === 'landing' || currentPage === 'login' || currentPage === 'privacy' || currentPage === 'terms' || currentPage === 'safety') && (
+      {/* Translucent Navbar (Shown on Landing, Login, Policies, and Profile pages) */}
+      {(currentPage === 'landing' || currentPage === 'login' || currentPage === 'privacy' || currentPage === 'terms' || currentPage === 'safety' || currentPage === 'profile') && (
         <Navbar 
           currentPage={currentPage} 
           setCurrentPage={setCurrentPage} 

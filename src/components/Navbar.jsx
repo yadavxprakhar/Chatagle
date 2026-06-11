@@ -62,14 +62,22 @@ export default function Navbar({ currentPage, setCurrentPage, user, setUser, onl
           {/* Action button */}
           {user ? (
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-white/5 border border-white/10 pr-3 pl-1.5 py-1 rounded-full">
+              <button 
+                onClick={() => setCurrentPage('profile')}
+                className={`flex items-center gap-2 pr-3 pl-1.5 py-1 rounded-full border transition-all duration-300 ${
+                  currentPage === 'profile'
+                    ? 'bg-purple-500/10 border-purple-500/40 text-white shadow-lg shadow-purple-500/5 hover:bg-purple-500/15'
+                    : 'bg-white/5 border-white/10 text-white/90 hover:bg-white/10 hover:border-white/20 active:scale-95'
+                }`}
+                title="View Profile Settings"
+              >
                 <img 
                   src={user.avatarUrl} 
                   alt="avatar" 
                   className="w-7 h-7 rounded-full bg-purple-900 border border-white/20" 
                 />
-                <span className="text-sm font-semibold text-white/90">{user.name.split(' ')[0]}</span>
-              </div>
+                <span className="text-sm font-semibold">{user.name.split(' ')[0]}</span>
+              </button>
               <button 
                 onClick={handleLogout}
                 className="text-xs font-semibold text-textMuted hover:text-white transition-colors duration-200 uppercase tracking-wider"
