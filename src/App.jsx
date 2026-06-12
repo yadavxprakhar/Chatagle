@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import Navbar from './components/Navbar.jsx'
 import LandingPage from './pages/LandingPage.jsx'
 import AuthPage from './pages/AuthPage.jsx'
@@ -11,6 +11,7 @@ import ProfilePage from './pages/ProfilePage.jsx'
 import { auth, db } from './firebase.js'
 import { onAuthStateChanged } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
+import { io } from 'socket.io-client'
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState('landing')
@@ -18,9 +19,22 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [matchRoomId, setMatchRoomId] = useState(null)
   const [matchRole, setMatchRole] = useState(null)
+  const [matchPartner, setMatchPartner] = useState(null)
+  const socketRef = useRef(null)
   
   // High-fidelity online user count that fluctuates organically
   const [onlineCount, setOnlineCount] = useState(23104)
+
+  // Initialize socket instance once
+  useEffect(() => {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'
+    socketRef.current = io(backendUrl, { autoConnect: false })
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close()
+      }
+    }
+  }, [])
 
   // Firebase session observer
   useEffect(() => {
@@ -85,6 +99,8 @@ export default function App() {
             onlineCount={onlineCount} 
             setMatchRoomId={setMatchRoomId}
             setMatchRole={setMatchRole}
+            setMatchPartner={setMatchPartner}
+            socket={socketRef.current}
           />
         )
       case 'chat':
@@ -95,8 +111,11 @@ export default function App() {
             onlineCount={onlineCount} 
             matchRoomId={matchRoomId}
             matchRole={matchRole}
+            matchPartner={matchPartner}
             setMatchRoomId={setMatchRoomId}
             setMatchRole={setMatchRole}
+            setMatchPartner={setMatchPartner}
+            socket={socketRef.current}
           />
         )
       case 'privacy':

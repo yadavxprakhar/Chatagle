@@ -39,7 +39,7 @@ const getMockLocation = (seed) => {
   return CITIES[idx]
 }
 
-export default function MatchingPage({ setCurrentPage, user, onlineCount, setMatchRoomId, setMatchRole }) {
+export default function MatchingPage({ setCurrentPage, user, onlineCount, setMatchRoomId, setMatchRole, setMatchPartner, socket }) {
   // Matching Preferences States
   const [isQueueing, setIsQueueing] = useState(false)
   const [prefCountry, setPrefCountry] = useState('any')
@@ -51,211 +51,93 @@ export default function MatchingPage({ setCurrentPage, user, onlineCount, setMat
   const [statusText, setStatusText] = useState('Connecting to matchmaker server...')
   const [subText, setSubText] = useState('Initializing encrypted peer handshake...')
   
-  const activeRoomRef = useRef(null)
   const isMatchSuccessful = useRef(false)
 
   useEffect(() => {
-    if (!isQueueing) return
+    if (!isQueueing || !socket) return
 
     let isMounted = true
-    let unsubscribeSnapshot = null
+    isMatchSuccessful.current = false
 
-    async function startMatchmaking() {
-      try {
-        if (!isMounted) return
+    // Step 1: Connecting phase delay for stabilization
+    setStatusText('Connecting to matchmaker server...')
+    setSubText('Initializing encrypted peer handshake...')
 
-        // Step 1: Connecting phase delay for stabilization
-        setStatusText('Connecting to matchmaker server...')
-        setSubText('Initializing encrypted peer handshake...')
-        await new Promise(resolve => setTimeout(resolve, 800))
-        if (!isMounted) return
-
-        setStatusText('Filtering active online users...')
-        setSubText('Selecting optimal latency connection...')
-        await new Promise(resolve => setTimeout(resolve, 600))
-        if (!isMounted) return
-
-        // Get user profile location
-        const myLoc = getMockLocation(user?.email || user?.uid || 'guest')
-
-        // Fetch list of blocked users
-        const blocksCol = collection(db, 'users', user?.uid || 'guest', 'blocks')
-        const blocksSnapshot = await getDocs(blocksCol)
-        const blockedUids = []
-        blocksSnapshot.forEach(docSnap => {
-          blockedUids.push(docSnap.id)
-        })
-
-        // Step 2: Query for waiting rooms created by other users
-        let q = query(
-          collection(db, 'rooms'),
-          where('status', '==', 'waiting')
-        )
-
-        // Strict query filters
-        if (prefLanguage !== 'any') {
-          q = query(q, where('creatorLanguage', '==', prefLanguage))
-        }
-        if (prefCountry !== 'any') {
-          q = query(q, where('creatorCountry', '==', prefCountry))
-        }
-
-        const querySnapshot = await getDocs(q)
-        if (!isMounted) return
-
-        const candidates = []
-        for (const roomDoc of querySnapshot.docs) {
-          const roomData = roomDoc.data()
-          
-          // Filter 1: Check block list (ensure we haven't blocked the creator)
-          if (blockedUids.includes(roomData.creatorId)) continue
-          
-          // Filter 2: Shared interests matching
-          const creatorTags = roomData.creatorInterests || []
-          const intersection = selectedTags.filter(tag => creatorTags.includes(tag))
-          
-          // If strict interest tags are selected, skip if zero overlap
-          if (strictMatching && selectedTags.length > 0 && intersection.length === 0) {
-            continue
-          }
-
-          candidates.push({
-            id: roomDoc.id,
-            ref: roomDoc.ref,
-            score: intersection.length, // Overlap count for ranking
-            creatorId: roomData.creatorId
-          })
-        }
-
-        // Rank candidate rooms by number of matching interests (descending)
-        candidates.sort((a, b) => b.score - a.score)
-
-        let matchedRoomId = null
-
-        // Try to join rooms in prioritised order
-        for (const candidate of candidates) {
-          const roomRef = doc(db, 'rooms', candidate.id)
-          try {
-            const joined = await runTransaction(db, async (transaction) => {
-              const freshDoc = await transaction.get(roomRef)
-              if (!freshDoc.exists()) return false
-              
-              const roomData = freshDoc.data()
-              if (roomData.status !== 'waiting') return false
-
-              // Safety check: Check if creator blocked callee (us)
-              const creatorBlockRef = doc(db, 'users', roomData.creatorId, 'blocks', user?.uid || 'guest')
-              const creatorBlockSnap = await transaction.get(creatorBlockRef)
-              if (creatorBlockSnap.exists()) {
-                return false // Abandon join - creator has blocked callee
-              }
-
-              transaction.update(roomRef, {
-                peerId: user?.uid || 'guest_' + Math.random().toString(36).substring(7),
-                peerName: user?.name || 'Guest',
-                peerAvatar: user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=Guest_${Math.random()}`,
-                peerFlag: myLoc.flag,
-                peerInfo: { city: myLoc.city, country: myLoc.country },
-                peerMicOn: true,
-                peerCameraOn: true,
-                status: 'connected'
-              })
-              return true
-            })
-
-            if (joined) {
-              matchedRoomId = candidate.id
-              break
-            }
-          } catch (txErr) {
-            console.warn('Transaction failed for room', candidate.id, txErr)
-          }
-        }
-
-        if (!isMounted) return
-
-        if (matchedRoomId) {
-          // Joined as Callee!
-          isMatchSuccessful.current = true
-          setMatchRoomId(matchedRoomId)
-          setMatchRole('callee')
-          
-          setStatusText('Match found! Handshaking WebRTC...')
-          setSubText('Establishing direct peer stream connection...')
-          await new Promise(resolve => setTimeout(resolve, 600))
-          
-          if (isMounted) {
-            setCurrentPage('chat')
-          }
-        } else {
-          // No suitable room found, create one as Caller
-          const newRoomRef = doc(collection(db, 'rooms'))
-          activeRoomRef.current = newRoomRef
-
-          await setDoc(newRoomRef, {
-            status: 'waiting',
-            creatorId: user?.uid || 'guest_' + Math.random().toString(36).substring(7),
-            creatorName: user?.name || 'Guest',
-            creatorAvatar: user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=Guest_${Math.random()}`,
-            creatorFlag: myLoc.flag,
-            creatorInfo: { city: myLoc.city, country: myLoc.country },
-            creatorLanguage: prefLanguage,
-            creatorCountry: prefCountry,
-            creatorInterests: selectedTags,
-            creatorMicOn: true,
-            creatorCameraOn: true,
-            createdAt: serverTimestamp()
-          })
-
-          if (!isMounted) {
-            await deleteDoc(newRoomRef)
-            return
-          }
-
-          setMatchRoomId(newRoomRef.id)
-          setMatchRole('caller')
-          setStatusText('Waiting for a partner...')
-          setSubText('Creating secure room queue · Usually under 10 seconds')
-
-          // Listen for a peer to join
-          unsubscribeSnapshot = onSnapshot(newRoomRef, async (snapshot) => {
-            if (snapshot.exists() && isMounted) {
-              const data = snapshot.data()
-              if (data.status === 'connected' && data.peerId) {
-                isMatchSuccessful.current = true
-                setStatusText('Match found! Handshaking WebRTC...')
-                setSubText(`Connecting to peer in ${data.peerInfo?.city || 'another city'}...`)
-                
-                await new Promise(resolve => setTimeout(resolve, 600))
-                if (isMounted) {
-                  setCurrentPage('chat')
-                }
-              }
-            }
-          })
-        }
-      } catch (err) {
-        console.error('Matchmaking error:', err)
-        setStatusText('Matchmaking failed')
-        setSubText(err.message || 'An unexpected database error occurred.')
-      }
+    const myLoc = getMockLocation(user?.email || user?.uid || 'guest')
+    const queueData = {
+      uid: user?.uid || 'guest_' + Math.random().toString(36).substring(7),
+      name: user?.name || 'Guest',
+      avatarUrl: user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=Guest_${Math.random()}`,
+      flag: myLoc.flag,
+      city: myLoc.city,
+      country: myLoc.country,
+      prefLanguage,
+      prefCountry,
+      interests: selectedTags,
+      strictMatching
     }
 
-    startMatchmaking()
+    const handleConnect = () => {
+      if (!isMounted) return
+      setStatusText('Filtering active online users...')
+      setSubText('Selecting optimal latency connection...')
+      socket.emit('join-queue', queueData)
+    }
+
+    const handleMatchFound = ({ roomId, initiator, partner }) => {
+      if (!isMounted) return
+      isMatchSuccessful.current = true
+      setMatchRoomId(roomId)
+      setMatchRole(initiator ? 'caller' : 'callee')
+      setMatchPartner({
+        uid: partner.uid,
+        name: partner.name,
+        avatar: partner.avatarUrl,
+        flag: partner.flag,
+        city: partner.city,
+        country: partner.country
+      })
+
+      setStatusText('Match found! Handshaking WebRTC...')
+      setSubText(`Connecting to peer in ${partner.city || 'another city'}...`)
+      
+      setTimeout(() => {
+        if (isMounted) {
+          setCurrentPage('chat')
+        }
+      }, 1000)
+    }
+
+    const handleDisconnect = () => {
+      if (!isMounted) return
+      setStatusText('Disconnected from server')
+      setSubText('Attempting to reconnect...')
+    }
+
+    // Set listeners
+    socket.on('connect', handleConnect)
+    socket.on('match-found', handleMatchFound)
+    socket.on('disconnect', handleDisconnect)
+
+    // Connect socket
+    if (socket.connected) {
+      handleConnect()
+    } else {
+      socket.connect()
+    }
 
     return () => {
       isMounted = false
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot()
-      }
-      // Clean up waiting room if matching is interrupted
-      if (!isMatchSuccessful.current && activeRoomRef.current) {
-        deleteDoc(activeRoomRef.current).catch(err => {
-          console.error('Failed to delete stale room on cleanup:', err)
-        })
+      socket.off('connect', handleConnect)
+      socket.off('match-found', handleMatchFound)
+      socket.off('disconnect', handleDisconnect)
+
+      if (!isMatchSuccessful.current) {
+        socket.emit('leave-queue')
+        socket.disconnect()
       }
     }
-  }, [isQueueing, setCurrentPage, user, setMatchRoomId, setMatchRole, prefCountry, prefLanguage, strictMatching, selectedTags])
+  }, [isQueueing, socket, user, prefCountry, prefLanguage, strictMatching, selectedTags, setMatchRoomId, setMatchRole, setMatchPartner, setCurrentPage])
 
   const handleCancel = () => {
     setIsQueueing(false)

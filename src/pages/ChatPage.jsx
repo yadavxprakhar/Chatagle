@@ -42,8 +42,11 @@ export default function ChatPage({
   onlineCount, 
   matchRoomId, 
   matchRole, 
+  matchPartner,
   setMatchRoomId, 
-  setMatchRole 
+  setMatchRole,
+  setMatchPartner,
+  socket
 }) {
   // Local WebRTC & Signaling States
   const [localStream, setLocalStream] = useState(null)
@@ -87,6 +90,20 @@ export default function ChatPage({
   const peerConnectionRef = useRef(null)
   const chatBottomRef = useRef(null)
   const isDisconnecting = useRef(false)
+
+  // Initialize remote partner details from matchPartner prop
+  useEffect(() => {
+    if (matchPartner) {
+      setPartnerUid(matchPartner.uid)
+      setPartnerInfo({
+        name: matchPartner.name || 'Partner',
+        avatar: matchPartner.avatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Partner',
+        flag: matchPartner.flag || '🌍',
+        city: matchPartner.city || 'Unknown City',
+        country: matchPartner.country || ''
+      })
+    }
+  }, [matchPartner])
 
   // 1. Initialize Local Camera Stream (Once on mount)
   useEffect(() => {
@@ -154,25 +171,19 @@ export default function ChatPage({
     }
   }, [isCameraOn, localStream])
 
-  // Sync local media states to Firestore room doc
+  // Sync local media states to other peer over Socket
   useEffect(() => {
-    if (!matchRoomId || !matchRole || !user?.uid) return
+    if (!matchRoomId || !socket) return
 
-    const roomRef = doc(db, 'rooms', matchRoomId)
-    const updatePayload = {}
-    
-    if (matchRole === 'caller') {
-      updatePayload.creatorMicOn = isMicOn
-      updatePayload.creatorCameraOn = isCameraOn
-    } else {
-      updatePayload.peerMicOn = isMicOn
-      updatePayload.peerCameraOn = isCameraOn
-    }
-
-    updateDoc(roomRef, updatePayload).catch(err => {
-      console.error("Error updating room media state: ", err)
+    socket.emit('signal', {
+      roomId: matchRoomId,
+      signalData: {
+        type: 'media-state',
+        micOn: isMicOn,
+        cameraOn: isCameraOn
+      }
     })
-  }, [isMicOn, isCameraOn, matchRoomId, matchRole])
+  }, [isMicOn, isCameraOn, matchRoomId, socket])
 
   // WebRTC Stats / Latency monitor
   useEffect(() => {
@@ -203,19 +214,11 @@ export default function ChatPage({
     return () => clearInterval(interval)
   }, [connectionState])
 
-  // 2. WebRTC PeerConnection & Firestore Signaling Flow
+  // 2. WebRTC PeerConnection & Socket Signaling Flow
   useEffect(() => {
-    if (!localStream || !matchRoomId || !matchRole) return
+    if (!localStream || !matchRoomId || !matchRole || !socket) return
 
     let isMounted = true
-    let unsubscribeRoom = null
-    let unsubscribeIce = null
-    let unsubscribeRoomOffer = null
-    let unsubscribeAnswer = null
-
-    const roomRef = doc(db, 'rooms', matchRoomId)
-    const callerCandidatesCol = collection(roomRef, 'callerCandidates')
-    const calleeCandidatesCol = collection(roomRef, 'calleeCandidates')
 
     const pc = new RTCPeerConnection(configuration)
     peerConnectionRef.current = pc
@@ -246,116 +249,79 @@ export default function ChatPage({
 
     pc.onicecandidate = (event) => {
       if (event.candidate && isMounted) {
-        const candidateData = event.candidate.toJSON()
-        const targetCol = matchRole === 'caller' ? callerCandidatesCol : calleeCandidatesCol
-        addDoc(targetCol, candidateData).catch(err => console.error("Error writing ICE candidate:", err))
+        socket.emit('signal', {
+          roomId: matchRoomId,
+          signalData: {
+            type: 'candidate',
+            candidate: event.candidate.toJSON()
+          }
+        })
       }
     }
 
-    // Monitor room for partner metadata and disconnection
-    unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
+    // Listen for incoming signals and events
+    socket.on('signal', async (signalData) => {
       if (!isMounted) return
-      if (!snapshot.exists()) {
-        handlePartnerDisconnected('Partner disconnected.')
-        return
-      }
-      const data = snapshot.data()
-      if (data.status === 'disconnected') {
-        handlePartnerDisconnected('Partner skipped.')
-        return
-      }
+      try {
+        if (signalData.type === 'offer') {
+          const offerDescription = new RTCSessionDescription(signalData.offer)
+          await pc.setRemoteDescription(offerDescription)
 
-      // Update remote partner details
-      const matchedPeerUid = matchRole === 'caller' ? data.peerId : data.creatorId
-      if (matchedPeerUid) {
-        setPartnerUid(matchedPeerUid)
-      }
+          const answerDescription = await pc.createAnswer()
+          await pc.setLocalDescription(answerDescription)
 
-      if (matchRole === 'caller') {
-        if (data.peerId) {
-          setPartnerInfo({
-            name: data.peerName || 'Partner',
-            avatar: data.peerAvatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Partner',
-            flag: data.peerFlag || '🌍',
-            city: data.peerInfo?.city || 'Unknown City',
-            country: data.peerInfo?.country || ''
+          socket.emit('signal', {
+            roomId: matchRoomId,
+            signalData: {
+              type: 'answer',
+              answer: answerDescription
+            }
           })
+        } else if (signalData.type === 'answer') {
+          const answerDescription = new RTCSessionDescription(signalData.answer)
+          await pc.setRemoteDescription(answerDescription)
+        } else if (signalData.type === 'candidate') {
+          if (signalData.candidate) {
+            await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate))
+          }
+        } else if (signalData.type === 'media-state') {
+          setPartnerMicOn(signalData.micOn)
+          setPartnerCameraOn(signalData.cameraOn)
+        } else if (signalData.type === 'chat-message') {
+          setMessages(prev => [
+            ...prev,
+            {
+              id: signalData.id,
+              sender: 'partner',
+              name: signalData.senderName,
+              text: signalData.text,
+              time: new Date()
+            }
+          ])
         }
-      } else {
-        setPartnerInfo({
-          name: data.creatorName || 'Partner',
-          avatar: data.creatorAvatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Partner',
-          flag: data.creatorFlag || '🌍',
-          city: data.creatorInfo?.city || 'Unknown City',
-          country: data.creatorInfo?.country || ''
-        })
+      } catch (err) {
+        console.warn("Error processing WebRTC signal:", err)
       }
-
-      // Update partner media status flags
-      const pMicOn = matchRole === 'caller' ? data.peerMicOn : data.creatorMicOn
-      const pCameraOn = matchRole === 'caller' ? data.peerCameraOn : data.creatorCameraOn
-      
-      setPartnerMicOn(pMicOn !== false)
-      setPartnerCameraOn(pCameraOn !== false)
     })
 
-    // ICE Candidate listener
-    const iceColToListen = matchRole === 'caller' ? calleeCandidatesCol : callerCandidatesCol
-    unsubscribeIce = onSnapshot(iceColToListen, (snapshot) => {
-      snapshot.docChanges().forEach(change => {
-        if (change.type === 'added' && isMounted) {
-          const candidateData = change.doc.data()
-          pc.addIceCandidate(new RTCIceCandidate(candidateData)).catch(err => console.warn("Error adding remote ICE candidate:", err))
-        }
-      })
+    socket.on('peer-left', () => {
+      if (isMounted) {
+        handlePartnerDisconnected('Partner disconnected.')
+      }
     })
 
     // SDP Offer / Answer Exchange
     async function startSdpExchange() {
       try {
         if (matchRole === 'caller') {
-          // Caller creates the offer
           const offerDescription = await pc.createOffer()
           await pc.setLocalDescription(offerDescription)
 
-          await updateDoc(roomRef, {
-            offer: {
-              type: offerDescription.type,
-              sdp: offerDescription.sdp
-            }
-          })
-
-          // Listen for answer
-          unsubscribeAnswer = onSnapshot(roomRef, (snapshot) => {
-            if (!isMounted) return
-            const data = snapshot.data()
-            if (data && data.answer && !pc.currentRemoteDescription) {
-              const answerDescription = new RTCSessionDescription(data.answer)
-              pc.setRemoteDescription(answerDescription).catch(err => console.error("Error setting answer description:", err))
-            }
-          })
-        } else {
-          // Callee listens for the offer
-          unsubscribeRoomOffer = onSnapshot(roomRef, async (snapshot) => {
-            if (!isMounted) return
-            const data = snapshot.data()
-            if (data && data.offer && !pc.localDescription) {
-              try {
-                const offerDescription = new RTCSessionDescription(data.offer)
-                await pc.setRemoteDescription(offerDescription)
-
-                const answerDescription = await pc.createAnswer()
-                await pc.setLocalDescription(answerDescription)
-
-                await updateDoc(roomRef, {
-                  answer: {
-                    type: answerDescription.type,
-                    sdp: answerDescription.sdp
-                  }
-                })
-              } catch (sdpErr) {
-                console.error("Error setting remote offer / answer:", sdpErr)
-              }
+          socket.emit('signal', {
+            roomId: matchRoomId,
+            signalData: {
+              type: 'offer',
+              offer: offerDescription
             }
           })
         }
@@ -368,13 +334,11 @@ export default function ChatPage({
 
     return () => {
       isMounted = false
-      if (unsubscribeRoom) unsubscribeRoom()
-      if (unsubscribeIce) unsubscribeIce()
-      if (unsubscribeRoomOffer) unsubscribeRoomOffer()
-      if (unsubscribeAnswer) unsubscribeAnswer()
+      socket.off('signal')
+      socket.off('peer-left')
       pc.close()
     }
-  }, [localStream, matchRoomId, matchRole])
+  }, [localStream, matchRoomId, matchRole, socket])
 
   // Partner Disconnect Handler
   const handlePartnerDisconnected = (message) => {
@@ -405,31 +369,6 @@ export default function ChatPage({
     return () => clearInterval(interval)
   }, [connectionState])
 
-  // 4. Real-time Message Collection Listener
-  useEffect(() => {
-    if (!matchRoomId) return
-
-    const messagesCol = collection(db, 'rooms', matchRoomId, 'messages')
-    const q = query(messagesCol, orderBy('createdAt', 'asc'))
-
-    const unsubscribeMessages = onSnapshot(q, (snapshot) => {
-      const msgs = []
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data()
-        msgs.push({
-          id: docSnap.id,
-          sender: data.senderId === user?.uid ? 'user' : 'partner',
-          name: data.senderName,
-          text: data.text,
-          time: data.createdAt ? data.createdAt.toDate() : new Date()
-        })
-      })
-      setMessages(msgs)
-    })
-
-    return () => unsubscribeMessages()
-  }, [matchRoomId, user])
-
   // Scroll to chat bottom
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -442,62 +381,68 @@ export default function ChatPage({
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`
   }
 
-  // Handle sending a message
-  const handleSendMessage = async (e) => {
+  // Handle sending a message over Socket
+  const handleSendMessage = (e) => {
     e.preventDefault()
-    if (!typedMessage.trim() || !matchRoomId) return
+    if (!typedMessage.trim() || !matchRoomId || !socket) return
 
-    const messagesCol = collection(db, 'rooms', matchRoomId, 'messages')
-    try {
-      await addDoc(messagesCol, {
-        senderId: user?.uid || 'guest_' + Math.random().toString(36).substring(7),
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(7)}`
+
+    socket.emit('signal', {
+      roomId: matchRoomId,
+      signalData: {
+        type: 'chat-message',
+        id: messageId,
+        senderId: user?.uid || 'guest',
         senderName: user?.name || 'You',
+        text: typedMessage
+      }
+    })
+
+    setMessages(prev => [
+      ...prev,
+      {
+        id: messageId,
+        sender: 'user',
+        name: user?.name || 'You',
         text: typedMessage,
-        createdAt: serverTimestamp()
-      })
-      setTypedMessage('')
-    } catch (err) {
-      console.error("Error sending message:", err)
-    }
+        time: new Date()
+      }
+    ])
+
+    setTypedMessage('')
   }
 
   // Skip / Next Match
-  const handleNextMatch = async () => {
+  const handleNextMatch = () => {
     if (isDisconnecting.current) return
     isDisconnecting.current = true
 
-    if (matchRoomId) {
-      try {
-        const roomRef = doc(db, 'rooms', matchRoomId)
-        await updateDoc(roomRef, { status: 'disconnected' })
-      } catch (err) {
-        console.error("Error setting disconnected status on next match:", err)
-      }
+    if (matchRoomId && socket) {
+      socket.emit('leave-room', { roomId: matchRoomId })
     }
 
     cleanupWebRTC()
     setMatchRoomId(null)
     setMatchRole(null)
+    setMatchPartner(null)
     setCurrentPage('matching')
   }
 
   // End Session
-  const handleEndSession = async () => {
+  const handleEndSession = () => {
     if (isDisconnecting.current) return
     isDisconnecting.current = true
 
-    if (matchRoomId) {
-      try {
-        const roomRef = doc(db, 'rooms', matchRoomId)
-        await updateDoc(roomRef, { status: 'disconnected' })
-      } catch (err) {
-        console.error("Error setting disconnected status on end session:", err)
-      }
+    if (matchRoomId && socket) {
+      socket.emit('leave-room', { roomId: matchRoomId })
+      socket.disconnect()
     }
 
     cleanupWebRTC()
     setMatchRoomId(null)
     setMatchRole(null)
+    setMatchPartner(null)
     setCurrentPage('landing')
   }
 
