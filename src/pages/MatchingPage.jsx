@@ -156,6 +156,8 @@ export default function MatchingPage({ setCurrentPage, user, onlineCount, setMat
                 peerAvatar: user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=Guest_${Math.random()}`,
                 peerFlag: myLoc.flag,
                 peerInfo: { city: myLoc.city, country: myLoc.country },
+                peerMicOn: true,
+                peerCameraOn: true,
                 status: 'connected'
               })
               return true
@@ -200,6 +202,8 @@ export default function MatchingPage({ setCurrentPage, user, onlineCount, setMat
             creatorLanguage: prefLanguage,
             creatorCountry: prefCountry,
             creatorInterests: selectedTags,
+            creatorMicOn: true,
+            creatorCameraOn: true,
             createdAt: serverTimestamp()
           })
 

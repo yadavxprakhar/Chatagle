@@ -27,6 +27,15 @@ const configuration = {
   iceCandidatePoolSize: 10
 }
 
+const FILTERS = [
+  { id: 'normal', name: 'Normal', class: '' },
+  { id: 'grayscale', name: 'Noir', class: 'grayscale' },
+  { id: 'sepia', name: 'Sepia', class: 'sepia' },
+  { id: 'warm', name: 'Warm', class: 'saturate-150 contrast-125 brightness-105' },
+  { id: 'cool', name: 'Cool', class: 'hue-rotate-30 contrast-110 saturate-125' },
+  { id: 'vintage', name: 'Vintage', class: 'sepia contrast-115 brightness-95 saturate-125' }
+]
+
 export default function ChatPage({ 
   setCurrentPage, 
   user, 
@@ -67,13 +76,19 @@ export default function ChatPage({
   const [reportReason, setReportReason] = useState('')
   const [toastMessage, setToastMessage] = useState('')
 
+  // Enhancements States
+  const [partnerMicOn, setPartnerMicOn] = useState(true)
+  const [partnerCameraOn, setPartnerCameraOn] = useState(true)
+  const [latency, setLatency] = useState(null)
+  const [selectedFilter, setSelectedFilter] = useState('normal')
+
   const localVideoRef = useRef(null)
   const remoteVideoRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const chatBottomRef = useRef(null)
   const isDisconnecting = useRef(false)
 
-  // 1. Initialize Local Camera Stream
+  // 1. Initialize Local Camera Stream (Once on mount)
   useEffect(() => {
     let isMounted = true
     async function startCamera() {
@@ -86,6 +101,11 @@ export default function ChatPage({
           stream.getTracks().forEach(track => track.stop())
           return
         }
+
+        // Apply initial media states
+        stream.getAudioTracks().forEach(t => t.enabled = isMicOn)
+        stream.getVideoTracks().forEach(t => t.enabled = isCameraOn)
+
         setLocalStream(stream)
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream
@@ -99,17 +119,15 @@ export default function ChatPage({
       }
     }
 
-    if (isCameraOn) {
-      startCamera()
-    } else {
-      stopCamera()
-    }
+    startCamera()
 
     return () => {
       isMounted = false
-      stopCamera()
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop())
+      }
     }
-  }, [isCameraOn])
+  }, []) // Empty deps so it only runs once on mount
 
   const stopCamera = () => {
     if (localStream) {
@@ -126,6 +144,64 @@ export default function ChatPage({
       })
     }
   }, [isMicOn, localStream])
+
+  // Handle Toggle Camera Video Track
+  useEffect(() => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = isCameraOn
+      })
+    }
+  }, [isCameraOn, localStream])
+
+  // Sync local media states to Firestore room doc
+  useEffect(() => {
+    if (!matchRoomId || !matchRole || !user?.uid) return
+
+    const roomRef = doc(db, 'rooms', matchRoomId)
+    const updatePayload = {}
+    
+    if (matchRole === 'caller') {
+      updatePayload.creatorMicOn = isMicOn
+      updatePayload.creatorCameraOn = isCameraOn
+    } else {
+      updatePayload.peerMicOn = isMicOn
+      updatePayload.peerCameraOn = isCameraOn
+    }
+
+    updateDoc(roomRef, updatePayload).catch(err => {
+      console.error("Error updating room media state: ", err)
+    })
+  }, [isMicOn, isCameraOn, matchRoomId, matchRole])
+
+  // WebRTC Stats / Latency monitor
+  useEffect(() => {
+    if (connectionState !== 'connected' || !peerConnectionRef.current) {
+      setLatency(null)
+      return
+    }
+
+    const interval = setInterval(async () => {
+      if (peerConnectionRef.current && connectionState === 'connected') {
+        try {
+          const stats = await peerConnectionRef.current.getStats()
+          let rtt = null
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              rtt = report.currentRoundTripTime * 1000 // Convert seconds to ms
+            }
+          })
+          if (rtt !== null) {
+            setLatency(Math.round(rtt))
+          }
+        } catch (e) {
+          console.error("Error reading WebRTC stats: ", e)
+        }
+      }
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [connectionState])
 
   // 2. WebRTC PeerConnection & Firestore Signaling Flow
   useEffect(() => {
@@ -214,6 +290,13 @@ export default function ChatPage({
           country: data.creatorInfo?.country || ''
         })
       }
+
+      // Update partner media status flags
+      const pMicOn = matchRole === 'caller' ? data.peerMicOn : data.creatorMicOn
+      const pCameraOn = matchRole === 'caller' ? data.peerCameraOn : data.creatorCameraOn
+      
+      setPartnerMicOn(pMicOn !== false)
+      setPartnerCameraOn(pCameraOn !== false)
     })
 
     // ICE Candidate listener
@@ -474,6 +557,37 @@ export default function ChatPage({
             className="w-full h-full object-cover scale-105"
           />
 
+          {/* Partner Camera-off overlay */}
+          {connectionState === 'connected' && !partnerCameraOn && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#07070B] z-10 gap-5 animate-fade-in">
+              <Particles
+                className="absolute inset-0 z-0"
+                quantity={60}
+                ease={50}
+                color="#ec4899"
+                refresh
+              />
+              <div className="relative z-10 w-24 h-24 rounded-full bg-purple-900/30 border-2 border-white/10 flex items-center justify-center overflow-hidden shadow-2xl animate-pulse">
+                <img 
+                  src={partnerInfo.avatar} 
+                  alt={partnerInfo.name} 
+                  className="w-16 h-16"
+                />
+              </div>
+              <span className="text-sm font-semibold tracking-wider text-white/80 z-10 uppercase animate-pulse">
+                {partnerInfo.name} turned off camera
+              </span>
+            </div>
+          )}
+
+          {/* Partner Mic muted indicator */}
+          {connectionState === 'connected' && !partnerMicOn && (
+            <div className="absolute top-20 right-6 z-10 bg-danger/20 border border-danger/40 backdrop-blur-md px-3.5 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg animate-fade-in">
+              <span className="w-2 h-2 rounded-full bg-danger animate-pulse"></span>
+              <span className="text-[10px] font-bold text-white uppercase tracking-wider">Partner Muted</span>
+            </div>
+          )}
+
           {/* Connection state overlay */}
           {connectionState !== 'connected' && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#07070B]/90 z-10 gap-4">
@@ -527,7 +641,7 @@ export default function ChatPage({
         </div>
 
         {/* 3. Match Info Chip (Top-left) */}
-        <div className="absolute top-20 left-6 z-10 animate-fade-up">
+        <div className="absolute top-20 left-6 z-10 animate-fade-up flex items-center gap-3">
           <div className="glass-panel px-4 py-2.5 flex items-center gap-3 bg-black/45 border-white/5 shadow-lg">
             <span className="text-lg">{partnerInfo.flag}</span>
             <div className="flex flex-col text-left">
@@ -544,10 +658,29 @@ export default function ChatPage({
               {formatTime(timeConnected)}
             </div>
           </div>
+
+          {/* Latency Indicator Badge */}
+          {connectionState === 'connected' && (
+            <div className="glass-panel px-3 py-2 flex items-center gap-2 bg-black/45 border-white/5 shadow-lg text-xs font-semibold animate-fade-in">
+              <span className={`w-2 h-2 rounded-full ${
+                latency === null ? 'bg-gray-500' :
+                latency < 80 ? 'bg-green-500 animate-pulse' :
+                latency < 180 ? 'bg-yellow-500 animate-pulse' :
+                'bg-red-500 animate-pulse'
+              }`}></span>
+              <span className="text-[10px] uppercase font-bold text-white/90">
+                {latency === null ? 'Syncing...' : `${latency}ms · ${
+                  latency < 80 ? 'Excellent' :
+                  latency < 180 ? 'Good' :
+                  'Poor'
+                }`}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* 4. Local Camera Feed (Floating Bottom-Right Card) */}
-        <div className="absolute bottom-28 right-6 md:bottom-32 md:right-8 z-20 w-[140px] h-[105px] md:w-[200px] md:h-[150px] rounded-2xl overflow-hidden glass-panel border-2 border-white/15 shadow-2xl flex items-center justify-center bg-black/60 transition-all hover:scale-105 duration-200">
+        <div className="absolute bottom-36 right-6 md:bottom-32 md:right-8 z-20 w-[140px] h-[105px] md:w-[200px] md:h-[150px] rounded-2xl overflow-hidden glass-panel border-2 border-white/15 shadow-2xl flex items-center justify-center bg-black/60 transition-all hover:scale-105 duration-200">
           <BorderBeam size={60} duration={4} colorFrom="#A855F7" colorTo="#06B6D4" />
           {isCameraOn && !cameraError ? (
             <video 
@@ -555,19 +688,52 @@ export default function ChatPage({
               autoPlay 
               muted 
               playsInline 
-              className="w-full h-full object-cover rounded-xl"
+              className={`w-full h-full object-cover rounded-xl transition-all duration-300 ${
+                FILTERS.find(f => f.id === selectedFilter)?.class || ''
+              }`}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center gap-1 text-center p-2">
-              <span className="text-xl md:text-2xl text-dangerRed animate-pulse">📹</span>
-              <span className="text-[9px] md:text-[11px] font-bold text-white/90">Camera Off</span>
+            <div className="flex flex-col items-center justify-center gap-1 text-center w-full h-full">
+              <div className="w-10 h-10 rounded-full bg-purple-900/30 border border-white/10 flex items-center justify-center">
+                <span className="text-sm">📸</span>
+              </div>
+              <span className="text-[9px] font-bold text-textMuted uppercase tracking-wider">Camera Off</span>
             </div>
           )}
+
+          {/* Local Mic Muted Overlay */}
+          {!isMicOn && (
+            <div className="absolute top-2 right-2 bg-danger/80 backdrop-blur-sm p-1 rounded-full text-[9px] text-white">
+              🎙️
+            </div>
+          )}
+
           {/* Tag */}
           <div className="absolute bottom-2 left-2 bg-black/50 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-bold text-white border border-white/5">
             You
           </div>
         </div>
+
+        {/* Visual Filters Selector Dock */}
+        {connectionState === 'connected' && (
+          <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-20 w-full max-w-xs px-2 flex justify-center animate-fade-in">
+            <div className="glass-panel px-3 py-2 bg-black/60 border-white/5 shadow-2xl rounded-full flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-[280px]">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setSelectedFilter(f.id)}
+                  className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all duration-200 shrink-0 ${
+                    selectedFilter === f.id
+                      ? 'bg-purple-600 text-white shadow-md'
+                      : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 5. Center Bottom Controls Bar */}
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-4">
